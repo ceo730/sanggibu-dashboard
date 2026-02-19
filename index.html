@@ -113,33 +113,25 @@ function csvUrl(gid) {
 }
 
 // =============================================
-//  DATA FETCHING - multiple strategies
+//  DATA FETCHING - data.json (GitHub Action) + direct CSV fallback
 // =============================================
+function fetchDataJSON() {
+  return fetch('data.json?t=' + Date.now())
+    .then(function(r) {
+      if (!r.ok) throw new Error('data.json HTTP ' + r.status);
+      return r.json();
+    })
+    .then(function(data) {
+      return { aug: data.aug, y26: data.y26, updated: data.updated, source: 'data.json' };
+    });
+}
+
 function fetchCSV(gid) {
   var url = csvUrl(gid);
-
-  // Strategy 1: Direct fetch (works from localhost / HTTPS hosted)
   return fetch(url, { redirect: 'follow' })
     .then(function(r) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.text();
-    })
-    .catch(function(err1) {
-      // Strategy 2: allorigins proxy
-      document.getElementById('loadingText').textContent = '프록시 서버로 재시도 중...';
-      return fetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(url))
-        .then(function(r) {
-          if (!r.ok) throw new Error('Proxy1 HTTP ' + r.status);
-          return r.text();
-        })
-        .catch(function(err2) {
-          // Strategy 3: corsproxy.io
-          return fetch('https://corsproxy.io/?' + encodeURIComponent(url))
-            .then(function(r) {
-              if (!r.ok) throw new Error('Proxy2 HTTP ' + r.status);
-              return r.text();
-            });
-        });
     });
 }
 
@@ -399,27 +391,40 @@ function render(S){
 async function loadAllData(){
   var ld=document.getElementById('loading');
   ld.classList.remove('hidden');
-  document.getElementById('loadingText').textContent='Google Sheets에서 데이터를 불러오는 중...';
+  document.getElementById('loadingText').textContent='데이터를 불러오는 중...';
   try{
-    var results=await Promise.all(SHEETS.map(function(s){return fetchCSV(s.gid).then(parseCSV)}));
+    var sheetData, dataSource;
+    // Strategy 1: data.json (GitHub Action이 주기적으로 업데이트)
+    try {
+      var d=await fetchDataJSON();
+      sheetData={aug:d.aug, y26:d.y26};
+      dataSource='자동 갱신 ('+new Date(d.updated).toLocaleString('ko-KR')+')';
+    } catch(e1) {
+      // Strategy 2: Direct CSV fetch (localhost 또는 CORS 지원 환경)
+      document.getElementById('loadingText').textContent='Google Sheets에서 직접 불러오는 중...';
+      var results=await Promise.all(SHEETS.map(function(s){return fetchCSV(s.gid).then(parseCSV)}));
+      sheetData={aug:results[0], y26:results[1]};
+      dataSource='실시간';
+    }
     var allRec=[];
-    results.forEach(function(rows,i){
+    ['aug','y26'].forEach(function(key){
+      var rows=sheetData[key];
       var cols=detectColumns(rows);
       var recs=processRows(rows,cols);
-      recs.forEach(function(r){r.source=SHEETS[i].id});
+      recs.forEach(function(r){r.source=key});
       allRec=allRec.concat(recs);
     });
     var y26Aug=allRec.some(function(r){return r.source==='y26'&&r.month==='8월'});
     if(y26Aug) allRec=allRec.filter(function(r){return r.source!=='aug'});
     var stats=analyze(allRec);
     render(stats);
-    document.getElementById('lastUpdate').textContent='마지막 업데이트: '+new Date().toLocaleString('ko-KR')+'  |  총 '+allRec.length+'건';
+    document.getElementById('lastUpdate').textContent='데이터: '+dataSource+'  |  총 '+allRec.length+'건  |  조회: '+new Date().toLocaleString('ko-KR');
   }catch(err){
     document.getElementById('dashboard').innerHTML=
       '<div class="error-box"><h2>데이터 로드 실패</h2>'+
       '<p style="color:#e94560;font-size:15px">'+err.message+'</p>'+
-      '<p style="margin-top:16px"><strong style="color:#fff">해결 방법:</strong> 바탕화면의 <code>대시보드_실행.bat</code> 파일을 더블클릭해서 실행하세요.</p>'+
-      '<p style="margin-top:8px">로컬 웹서버를 통해 실행해야 Google Sheets 데이터를 정상적으로 불러올 수 있습니다.</p>'+
+      '<p style="margin-top:16px">GitHub Action이 아직 첫 실행을 완료하지 않았을 수 있습니다.</p>'+
+      '<p style="margin-top:8px">잠시 후 다시 시도해주세요.</p>'+
       '<button class="refresh-btn" onclick="loadAllData()" style="margin-top:16px">다시 시도</button></div>';
   }finally{ld.classList.add('hidden')}
 }

@@ -1,0 +1,59 @@
+name: Update Dashboard Data
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+
+      - name: Fetch Google Sheets CSV
+        run: |
+          PUB="https://docs.google.com/spreadsheets/d/e/2PACX-1vQNvUbrHTKi9JmKJpFSr45Jl1ywqtPwv-nV_cjo0KohzyKaAKZW-isCPPiYchPFLRihL58EleSgBmyj/pub"
+
+          curl -sL "${PUB}?gid=151890327&single=true&output=csv" -o aug.csv
+          curl -sL "${PUB}?gid=465843466&single=true&output=csv" -o y26.csv
+
+          echo "Aug CSV lines: $(wc -l < aug.csv)"
+          echo "Y26 CSV lines: $(wc -l < y26.csv)"
+
+      - name: Build data.json
+        run: |
+          python3 -c "
+          import csv, json, io
+
+          def read_csv(path):
+              with open(path, 'r', encoding='utf-8') as f:
+                  return list(csv.reader(f))
+
+          data = {
+              'aug': read_csv('aug.csv'),
+              'y26': read_csv('y26.csv'),
+              'updated': __import__('datetime').datetime.utcnow().isoformat() + 'Z'
+          }
+          with open('data.json', 'w', encoding='utf-8') as f:
+              json.dump(data, f, ensure_ascii=False)
+          print(f'data.json size: {len(open(\"data.json\").read())} bytes')
+          "
+
+      - name: Commit and push
+        run: |
+          rm -f aug.csv y26.csv
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data.json
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "Update dashboard data"
+            git push
+          fi
