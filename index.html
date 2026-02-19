@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>생기부추월차선 전환콜 분석 대시보드</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI','Malgun Gothic',sans-serif;background:#0f1117;color:#e0e0e0;min-height:100vh}
+.header{background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);padding:28px 40px;border-bottom:3px solid #e94560;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+.header h1{font-size:26px;font-weight:700;color:#fff}
+.header p{font-size:13px;color:#8892b0}
+.header-right{display:flex;align-items:center;gap:12px}
+.refresh-btn{background:#e94560;color:#fff;border:none;padding:8px 18px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;transition:all .2s}
+.refresh-btn:hover{background:#c0392b;transform:scale(1.03)}
+.last-update{font-size:11px;color:#64ffda}
+.container{max-width:1400px;margin:0 auto;padding:24px}
+
+.loading-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(15,17,23,0.95);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;transition:opacity .5s}
+.loading-overlay.hidden{opacity:0;pointer-events:none}
+.spinner{width:48px;height:48px;border:4px solid #252840;border-top-color:#e94560;border-radius:50%;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-text{margin-top:16px;color:#8892b0;font-size:14px}
+.error-box{background:#1a1d2e;border-radius:12px;padding:32px;text-align:center;margin-top:40px}
+.error-box h2{color:#e94560;margin-bottom:12px}
+.error-box p{color:#8892b0;margin-bottom:8px;line-height:1.7;font-size:14px}
+.error-box code{background:#252840;color:#64ffda;padding:2px 8px;border-radius:4px;font-size:13px}
+
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:24px}
+.kpi-card{background:#1a1d2e;border-radius:12px;padding:18px 22px;border-left:4px solid #e94560;position:relative;overflow:hidden}
+.kpi-card::after{content:'';position:absolute;top:0;right:0;width:80px;height:80px;background:radial-gradient(circle,rgba(233,69,96,0.08) 0%,transparent 70%)}
+.kpi-card .label{font-size:11px;color:#8892b0;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+.kpi-card .value{font-size:26px;font-weight:700;color:#fff}
+.kpi-card .sub{font-size:11px;color:#64ffda;margin-top:3px}
+.kpi-card.blue{border-left-color:#4361ee}
+.kpi-card.green{border-left-color:#64ffda}
+.kpi-card.purple{border-left-color:#a855f7}
+.kpi-card.orange{border-left-color:#f59e0b}
+.kpi-card.pink{border-left-color:#ec4899}
+
+.section{background:#1a1d2e;border-radius:12px;padding:22px;margin-bottom:18px}
+.section h2{font-size:17px;font-weight:600;color:#fff;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid #2d3148}
+.section h3{font-size:14px;font-weight:600;color:#ccd6f6;margin-bottom:10px}
+
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px}
+@media(max-width:900px){.grid-2,.grid-3{grid-template-columns:1fr}}
+
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:#0f1117;color:#8892b0;font-weight:600;text-align:left;padding:9px 12px;text-transform:uppercase;font-size:11px;letter-spacing:.5px}
+td{padding:9px 12px;border-bottom:1px solid #252840}
+tr:hover td{background:rgba(233,69,96,0.05)}
+.text-right{text-align:right}
+.hl{color:#64ffda;font-weight:600}
+.hl-r{color:#e94560;font-weight:600}
+.hl-y{color:#f59e0b;font-weight:600}
+
+.chart-box{position:relative;height:310px}
+.chart-sm{position:relative;height:270px}
+
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.badge-b{background:rgba(67,97,238,0.15);color:#4361ee}
+
+.funnel{display:flex;align-items:center;justify-content:center;gap:0;margin:18px 0;flex-wrap:wrap}
+.funnel-step{text-align:center;padding:14px 24px;min-width:130px}
+.funnel-step .num{font-size:30px;font-weight:700}
+.funnel-step .lbl{font-size:11px;color:#8892b0;margin-top:3px}
+.funnel-arrow{font-size:22px;color:#4361ee;margin:0 2px}
+.funnel-rate{font-size:11px;color:#64ffda;background:rgba(100,255,218,0.1);padding:2px 8px;border-radius:10px}
+
+.note{background:#252840;border-left:3px solid #f59e0b;padding:10px 14px;border-radius:0 8px 8px 0;margin-bottom:14px;font-size:12px;color:#ccd6f6;line-height:1.7}
+
+.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.summary-box{background:#0f1117;border-radius:8px;padding:14px;text-align:center}
+.summary-box .num{font-size:20px;font-weight:700;color:#fff}
+.summary-box .lbl{font-size:11px;color:#8892b0;margin-top:2px}
+</style>
+</head>
+<body>
+
+<div class="loading-overlay" id="loading">
+  <div class="spinner"></div>
+  <div class="loading-text" id="loadingText">Google Sheets에서 데이터를 불러오는 중...</div>
+</div>
+
+<div class="header">
+  <div>
+    <h1>생기부추월차선 전환콜 분석 대시보드</h1>
+    <p>추월차선 연구소 | 입시 전자책 문의 전환 분석 | 시트 데이터 실시간 반영</p>
+  </div>
+  <div class="header-right">
+    <div class="last-update" id="lastUpdate"></div>
+    <button class="refresh-btn" onclick="loadAllData()">새로고침</button>
+  </div>
+</div>
+
+<div class="container" id="dashboard"></div>
+
+<script>
+// =============================================
+//  CONFIG
+// =============================================
+var PUB_KEY = '2PACX-1vQNvUbrHTKi9JmKJpFSr45Jl1ywqtPwv-nV_cjo0KohzyKaAKZW-isCPPiYchPFLRihL58EleSgBmyj';
+var SHEETS = [
+  { gid: '151890327',  id: 'aug' },
+  { gid: '465843466',  id: 'y26' }
+];
+
+function csvUrl(gid) {
+  return 'https://docs.google.com/spreadsheets/d/e/' + PUB_KEY + '/pub?gid=' + gid + '&single=true&output=csv';
+}
+
+// =============================================
+//  DATA FETCHING - multiple strategies
+// =============================================
+function fetchCSV(gid) {
+  var url = csvUrl(gid);
+
+  // Strategy 1: Direct fetch (works from localhost / HTTPS hosted)
+  return fetch(url, { redirect: 'follow' })
+    .then(function(r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.text();
+    })
+    .catch(function(err1) {
+      // Strategy 2: allorigins proxy
+      document.getElementById('loadingText').textContent = '프록시 서버로 재시도 중...';
+      return fetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(url))
+        .then(function(r) {
+          if (!r.ok) throw new Error('Proxy1 HTTP ' + r.status);
+          return r.text();
+        })
+        .catch(function(err2) {
+          // Strategy 3: corsproxy.io
+          return fetch('https://corsproxy.io/?' + encodeURIComponent(url))
+            .then(function(r) {
+              if (!r.ok) throw new Error('Proxy2 HTTP ' + r.status);
+              return r.text();
+            });
+        });
+    });
+}
+
+function parseCSV(text) {
+  var result = Papa.parse(text, { skipEmptyLines: false });
+  return result.data;
+}
+
+// =============================================
+//  COLUMN DETECTION
+// =============================================
+function detectColumns(rows) {
+  var headerText = rows.slice(0, 4).map(function(r){ return r.join(','); }).join(',');
+  var colConsultant = -1, colCallStatus = -1, colValue = -1;
+
+  for (var ri = 0; ri < Math.min(rows.length, 4); ri++) {
+    for (var ci = 0; ci < rows[ri].length; ci++) {
+      var h = (rows[ri][ci] || '').trim();
+      if ((h.indexOf('상담사') >= 0 || h.indexOf('1차)') >= 0) && h.indexOf('콜') < 0) colConsultant = ci;
+      if (h === '콜 여부') colCallStatus = ci;
+      if (h === '전환 가치') colValue = ci;
+    }
+  }
+
+  if (colConsultant < 0 || colCallStatus < 0 || colValue < 0) {
+    var hasChatFirst = headerText.indexOf('1차 사항') >= 0;
+    var has2026 = headerText.indexOf('생추') >= 0 || headerText.indexOf('제공 대상') >= 0;
+    if (hasChatFirst) { colConsultant = 16; colCallStatus = 17; colValue = 20; }
+    else if (has2026) { colConsultant = 15; colCallStatus = 16; colValue = 19; }
+    else { colConsultant = 14; colCallStatus = 15; colValue = 18; }
+  }
+
+  return { colProduct:2, colChannel:5, colGrade:9, colField:10, colDate:4,
+           colConsultant:colConsultant, colCallStatus:colCallStatus, colValue:colValue };
+}
+
+// =============================================
+//  DATA PROCESSING
+// =============================================
+function cell(row, idx) {
+  return (row && idx >= 0 && idx < row.length) ? (row[idx] || '').trim() : '';
+}
+
+function parseMonth(d) {
+  if (!d) return 'unknown';
+  if (/^25[.\s]0?8|^08[.\s]|^2025[.\s]*8(?!\d)/i.test(d)) return '8월';
+  if (/^25[.\s]0?9|^09[.\s]|^2025[.\s]*9(?!\d)/i.test(d)) return '9월';
+  if (/^25[.\s]10|^10[.\s]|^2025[.\s]*10/i.test(d)) return '10월';
+  if (/^25[.\s]11|^11[.\s]|^2025[.\s]*11/i.test(d)) return '11월';
+  if (/^25[.\s]12|^12[.\s]|^2025[.\s]*12/i.test(d)) return '12월';
+  if (/^26[.\s]0?1|^01[.\s]|^2026[.\s]*1(?!\d)/i.test(d)) return '1월(26)';
+  if (/^26[.\s]0?2|^02[.\s]|^2026[.\s]*2(?!\d)/i.test(d)) return '2월(26)';
+  if (/^26[.\s]0?3|^03[.\s]/i.test(d)) return '3월(26)';
+  if (/^26[.\s]0?4|^04[.\s]/i.test(d)) return '4월(26)';
+  if (/^26[.\s]0?5|^05[.\s]/i.test(d)) return '5월(26)';
+  if (/^26[.\s]0?6|^06[.\s]/i.test(d)) return '6월(26)';
+  if (/^26[.\s]0?7|^07[.\s]/i.test(d)) return '7월(26)';
+  return 'unknown';
+}
+
+function parseRevenue(s) {
+  var nums = s.replace(/[^\d]/g, '');
+  if (!nums || nums.length < 5) return 0;
+  var v = parseInt(nums, 10);
+  return v > 10000 ? v : 0;
+}
+
+function normalizeField(f) {
+  if (!f) return '';
+  if (/메디|의대|치대|약[대학]|간호|수의/.test(f)) return '메디컬';
+  if (/이공|자연|공[대학]|반도체|전[기자]|화[학공]|생명|바이오|컴퓨터|소프트|IT|AI|인공|산업|환경|건축/.test(f)) return '이공계열';
+  if (/인문|사회|경[영상제]|심리|정치|외교|교육|법|미디어|국제|문[과학]/.test(f)) return '인문/사회';
+  if (/특목|외고|자사|과학고|국제고|상산/.test(f)) return '특목고';
+  if (/과기원|카이스트|KAIST|GIST|UNIST|DGIST/i.test(f)) return '과기원';
+  return f;
+}
+
+function processRows(allRows, cols) {
+  var records = [];
+  for (var i = 3; i < allRows.length; i++) {
+    var row = allRows[i];
+    if (!row || row.length < 8) continue;
+    var hasData = false;
+    for (var j = 0; j < Math.min(row.length, 6); j++) {
+      if ((row[j] || '').trim() !== '') { hasData = true; break; }
+    }
+    if (!hasData) continue;
+
+    var consultant = cell(row, cols.colConsultant);
+    if (consultant.length > 10) consultant = '';
+    var revenue = parseRevenue(cell(row, cols.colValue));
+
+    records.push({
+      product: cell(row, cols.colProduct), channel: cell(row, cols.colChannel),
+      grade: cell(row, cols.colGrade), field: cell(row, cols.colField),
+      date: cell(row, cols.colDate), month: parseMonth(cell(row, cols.colDate)),
+      consultant: consultant, callStatus: cell(row, cols.colCallStatus),
+      revenue: revenue, converted: revenue > 0
+    });
+  }
+  return records;
+}
+
+// =============================================
+//  ANALYTICS
+// =============================================
+function analyze(records) {
+  var total = records.length;
+  var callO = records.filter(function(r){return r.callStatus==='O';}).length;
+  var callPhone = records.filter(function(r){return r.callStatus==='업무폰';}).length;
+  var callTotal = callO + callPhone;
+  var noAnswer1 = records.filter(function(r){return r.callStatus.indexOf('1차 부재중')>=0;}).length;
+  var noAnswer2 = records.filter(function(r){return r.callStatus.indexOf('2차 부재중')>=0;}).length;
+  var noAnswer3 = records.filter(function(r){return r.callStatus.indexOf('3차 부재중')>=0;}).length;
+  var noAnswerTotal = noAnswer1+noAnswer2+noAnswer3;
+  var converted = records.filter(function(r){return r.converted;}).length;
+  var revenue = records.reduce(function(s,r){return s+r.revenue;},0);
+
+  var MO = ['8월','9월','10월','11월','12월','1월(26)','2월(26)','3월(26)','4월(26)','5월(26)','6월(26)','7월(26)'];
+  var mm = {};
+  records.forEach(function(r){
+    if(!mm[r.month]) mm[r.month]={total:0,callO:0,conv:0,rev:0};
+    mm[r.month].total++;
+    if(r.callStatus==='O'||r.callStatus==='업무폰') mm[r.month].callO++;
+    if(r.converted){mm[r.month].conv++;mm[r.month].rev+=r.revenue;}
+  });
+  var months = MO.filter(function(m){return mm[m];});
+
+  var pm={};
+  records.forEach(function(r){var p=r.product||'미분류';if(!pm[p])pm[p]={count:0,conv:0,rev:0};pm[p].count++;if(r.converted){pm[p].conv++;pm[p].rev+=r.revenue;}});
+  var cm={};
+  records.forEach(function(r){var c=r.consultant;if(!c)return;if(!cm[c])cm[c]={total:0,calls:0,conv:0,rev:0};cm[c].total++;if(r.callStatus==='O')cm[c].calls++;if(r.converted){cm[c].conv++;cm[c].rev+=r.revenue;}});
+  var gm={};
+  records.forEach(function(r){var g=r.grade||'미기재';if(!gm[g])gm[g]=0;gm[g]++;});
+  var fm={};
+  records.forEach(function(r){var f=normalizeField(r.field);if(!f)return;if(!fm[f])fm[f]=0;fm[f]++;});
+  var chm={};
+  records.forEach(function(r){var ch=r.channel||'미기재';if(!chm[ch])chm[ch]=0;chm[ch]++;});
+  var csm={};
+  records.forEach(function(r){
+    var s=r.callStatus||'미콜';
+    if(s.indexOf('부재중')>=0){if(s.indexOf('3차')>=0)s='3차 부재중';else if(s.indexOf('2차')>=0)s='2차 부재중';else s='1차 부재중';}
+    if(!csm[s])csm[s]=0;csm[s]++;
+  });
+
+  return {total:total,callO:callO,callPhone:callPhone,callTotal:callTotal,noAnswerTotal:noAnswerTotal,
+    converted:converted,revenue:revenue,months:months,monthMap:mm,prodMap:pm,consMap:cm,
+    gradeMap:gm,fieldMap:fm,chanMap:chm,callStatMap:csm};
+}
+
+// =============================================
+//  RENDER (동일 로직)
+// =============================================
+function fmt(n){return n.toLocaleString('ko-KR')}
+function fmtM(n){return Math.round(n/10000).toLocaleString('ko-KR')}
+function pct(a,b){return b>0?(a/b*100).toFixed(1):'-'}
+
+var chartInstances=[];
+function destroyCharts(){chartInstances.forEach(function(c){c.destroy()});chartInstances=[]}
+function makeChart(id,cfg){var el=document.getElementById(id);if(!el)return;var c=new Chart(el,cfg);chartInstances.push(c)}
+
+function render(S){
+  destroyCharts();
+  var avgRev=S.converted>0?Math.round(S.revenue/S.converted):0;
+  var cr=pct(S.callTotal,S.total),cvr=pct(S.converted,S.total),ccr=pct(S.converted,S.callTotal);
+  var prods=Object.entries(S.prodMap).sort(function(a,b){return b[1].count-a[1].count});
+  var cons=Object.entries(S.consMap).filter(function(x){return x[0].length>0&&x[0].length<10}).sort(function(a,b){return b[1].total-a[1].total});
+  var GO=['고1','중3','고2','고3','중2','중1','초등','N수','알수없음','미기재'];
+  var grades=GO.filter(function(g){return S.gradeMap[g]}).map(function(g){return[g,S.gradeMap[g]]});
+  Object.entries(S.gradeMap).forEach(function(x){if(GO.indexOf(x[0])<0)grades.push(x)});
+  var fields=Object.entries(S.fieldMap).sort(function(a,b){return b[1]-a[1]});
+  var chans=Object.entries(S.chanMap).sort(function(a,b){return b[1]-a[1]});
+
+  var h='<div class="kpi-grid">'+
+    '<div class="kpi-card"><div class="label">총 문의 건수</div><div class="value">'+fmt(S.total)+'</div><div class="sub">'+(S.months.length>0?S.months[0]+' ~ '+S.months[S.months.length-1]:'')+'</div></div>'+
+    '<div class="kpi-card blue"><div class="label">전화 콜 완료</div><div class="value">'+fmt(S.callTotal)+'</div><div class="sub">콜 성공률 '+cr+'%</div></div>'+
+    '<div class="kpi-card green"><div class="label">총 전환 (구매)</div><div class="value">'+fmt(S.converted)+'</div><div class="sub">전환률 '+cvr+'%</div></div>'+
+    '<div class="kpi-card purple"><div class="label">총 매출</div><div class="value">'+fmtM(S.revenue)+'만</div><div class="sub">건당 평균 '+fmtM(avgRev)+'만원</div></div>'+
+    '<div class="kpi-card orange"><div class="label">콜 대비 전환률</div><div class="value">'+ccr+'%</div><div class="sub">콜 연결 시 구매 확률</div></div>'+
+    '<div class="kpi-card pink"><div class="label">부재중 비율</div><div class="value">'+pct(S.noAnswerTotal,S.total)+'%</div><div class="sub">1~3차 부재중 합계 '+S.noAnswerTotal+'건</div></div></div>'+
+    '<div class="section"><h2>전환 퍼널</h2><div class="funnel">'+
+    '<div class="funnel-step"><div class="num" style="color:#4361ee">'+fmt(S.total)+'</div><div class="lbl">총 문의</div></div>'+
+    '<div><div class="funnel-arrow">&rarr;</div><div class="funnel-rate">'+cr+'%</div></div>'+
+    '<div class="funnel-step"><div class="num" style="color:#a855f7">'+fmt(S.callTotal)+'</div><div class="lbl">콜 연결</div></div>'+
+    '<div><div class="funnel-arrow">&rarr;</div><div class="funnel-rate">'+ccr+'%</div></div>'+
+    '<div class="funnel-step"><div class="num" style="color:#64ffda">'+fmt(S.converted)+'</div><div class="lbl">구매 전환</div></div>'+
+    '<div><div class="funnel-arrow">&rarr;</div><div class="funnel-rate">'+fmtM(S.revenue)+'만</div></div>'+
+    '<div class="funnel-step"><div class="num" style="color:#e94560">'+fmtM(S.revenue)+'만</div><div class="lbl">총 매출</div></div></div></div>'+
+    '<div class="section"><h2>월별 추이</h2><div class="chart-box"><canvas id="cM"></canvas></div>'+
+    '<table style="margin-top:14px"><thead><tr><th>월</th><th class="text-right">문의</th><th class="text-right">콜</th><th class="text-right">전환</th><th class="text-right">매출</th><th class="text-right">콜률</th><th class="text-right">전환률</th><th class="text-right">콜전환률</th></tr></thead><tbody>'+
+    S.months.map(function(m){var d=S.monthMap[m];return'<tr><td><span class="badge badge-b">'+m+'</span></td><td class="text-right">'+d.total+'</td><td class="text-right">'+d.callO+'</td><td class="text-right hl">'+d.conv+'</td><td class="text-right hl">'+fmtM(d.rev)+'만</td><td class="text-right">'+pct(d.callO,d.total)+'%</td><td class="text-right">'+pct(d.conv,d.total)+'%</td><td class="text-right">'+pct(d.conv,d.callO)+'%</td></tr>'}).join('')+
+    '<tr style="background:#252840;font-weight:700"><td>합계</td><td class="text-right">'+fmt(S.total)+'</td><td class="text-right">'+fmt(S.callTotal)+'</td><td class="text-right hl">'+fmt(S.converted)+'</td><td class="text-right hl">'+fmtM(S.revenue)+'만</td><td class="text-right">'+cr+'%</td><td class="text-right">'+cvr+'%</td><td class="text-right">'+ccr+'%</td></tr></tbody></table></div>'+
+    '<div class="grid-2"><div class="section"><h2>콜 상태 분석</h2><div class="chart-sm"><canvas id="cCS"></canvas></div>'+
+    '<table style="margin-top:10px"><thead><tr><th>상태</th><th class="text-right">건수</th><th class="text-right">비율</th></tr></thead><tbody>'+
+    Object.entries(S.callStatMap).sort(function(a,b){return b[1]-a[1]}).map(function(x){return'<tr><td>'+x[0]+'</td><td class="text-right">'+x[1]+'</td><td class="text-right">'+pct(x[1],S.total)+'%</td></tr>'}).join('')+'</tbody></table></div>'+
+    '<div class="section"><h2>상품별 분석</h2><div class="chart-sm"><canvas id="cP"></canvas></div>'+
+    '<table style="margin-top:10px"><thead><tr><th>상품</th><th class="text-right">문의</th><th class="text-right">전환</th><th class="text-right">매출</th><th class="text-right">전환률</th></tr></thead><tbody>'+
+    prods.map(function(x){return'<tr><td>'+(x[0]||'미분류')+'</td><td class="text-right">'+x[1].count+'</td><td class="text-right hl">'+x[1].conv+'</td><td class="text-right hl">'+fmtM(x[1].rev)+'만</td><td class="text-right">'+pct(x[1].conv,x[1].count)+'%</td></tr>'}).join('')+'</tbody></table></div></div>'+
+    '<div class="section"><h2>상담사별 성과</h2><div class="grid-2"><div class="chart-sm"><canvas id="cCo"></canvas></div><div>'+
+    '<table><thead><tr><th>상담사</th><th class="text-right">배정</th><th class="text-right">콜</th><th class="text-right">전환</th><th class="text-right">매출</th><th class="text-right">콜전환률</th></tr></thead><tbody>'+
+    cons.map(function(x){return'<tr><td><strong>'+x[0]+'</strong></td><td class="text-right">'+x[1].total+'</td><td class="text-right">'+x[1].calls+'</td><td class="text-right hl">'+x[1].conv+'</td><td class="text-right hl">'+fmtM(x[1].rev)+'만</td><td class="text-right">'+(x[1].calls>0?pct(x[1].conv,x[1].calls)+'%':'<span class="hl-y">채널톡</span>')+'</td></tr>'}).join('')+
+    '</tbody></table></div></div></div>'+
+    '<div class="grid-2"><div class="section"><h2>학년별 분포</h2><div class="chart-sm"><canvas id="cG"></canvas></div>'+
+    '<table style="margin-top:10px"><thead><tr><th>학년</th><th class="text-right">건수</th><th class="text-right">비율</th></tr></thead><tbody>'+
+    grades.filter(function(x){return x[1]>0}).map(function(x){return'<tr><td>'+x[0]+'</td><td class="text-right">'+x[1]+'</td><td class="text-right">'+pct(x[1],S.total)+'%</td></tr>'}).join('')+'</tbody></table></div>'+
+    '<div class="section"><h2>희망 계열 분포</h2><div class="chart-sm"><canvas id="cF"></canvas></div>'+
+    '<table style="margin-top:10px"><thead><tr><th>계열</th><th class="text-right">건수</th><th class="text-right">비율</th></tr></thead><tbody>'+
+    fields.map(function(x){var t=fields.reduce(function(s,y){return s+y[1]},0);return'<tr><td>'+x[0]+'</td><td class="text-right">'+x[1]+'</td><td class="text-right">'+pct(x[1],t)+'%</td></tr>'}).join('')+'</tbody></table></div></div>'+
+    '<div class="section"><h2>유입 채널 분석</h2><div class="grid-2"><div class="chart-sm"><canvas id="cCh"></canvas></div><div>'+
+    '<table><thead><tr><th>채널</th><th class="text-right">건수</th><th class="text-right">비율</th></tr></thead><tbody>'+
+    chans.map(function(x){return'<tr><td>'+x[0]+'</td><td class="text-right hl">'+x[1]+'</td><td class="text-right">'+pct(x[1],S.total)+'%</td></tr>'}).join('')+'</tbody></table></div></div></div>'+
+    '<div class="section"><h2>월별 매출 & 건당 평균</h2><div class="chart-box"><canvas id="cR"></canvas></div></div>'+
+    '<div class="section"><h2>상품별 매출 비중</h2><div class="summary-grid">'+
+    prods.filter(function(x){return x[1].rev>0}).map(function(x){return'<div class="summary-box"><div class="num" style="color:#e94560">'+pct(x[1].rev,S.revenue)+'%</div><div class="lbl">'+x[0]+'</div><div style="font-size:12px;color:#64ffda;margin-top:4px">'+fmtM(x[1].rev)+'만원</div></div>'}).join('')+
+    '</div><div class="chart-sm" style="height:200px"><canvas id="cRP"></canvas></div></div>'+
+    '<div class="section"><h2>핵심 인사이트 (자동 분석)</h2><div class="grid-2"><div><h3 style="color:#64ffda">강점</h3><ul style="padding-left:18px;line-height:2;font-size:13px" id="iG"></ul></div><div><h3 style="color:#f59e0b">개선 포인트</h3><ul style="padding-left:18px;line-height:2;font-size:13px" id="iB"></ul></div></div></div>';
+
+  document.getElementById('dashboard').innerHTML=h;
+  Chart.defaults.color='#8892b0';Chart.defaults.borderColor='#252840';
+
+  makeChart('cM',{type:'bar',data:{labels:S.months,datasets:[
+    {label:'문의',data:S.months.map(function(m){return S.monthMap[m].total}),backgroundColor:'rgba(67,97,238,0.7)',borderRadius:4,order:2},
+    {label:'콜',data:S.months.map(function(m){return S.monthMap[m].callO}),backgroundColor:'rgba(168,85,247,0.7)',borderRadius:4,order:3},
+    {label:'전환',data:S.months.map(function(m){return S.monthMap[m].conv}),backgroundColor:'rgba(100,255,218,0.7)',borderRadius:4,order:4},
+    {label:'전환률(%)',data:S.months.map(function(m){var d=S.monthMap[m];return d.total?+(d.conv/d.total*100).toFixed(1):0}),type:'line',borderColor:'#e94560',backgroundColor:'rgba(233,69,96,0.1)',pointBackgroundColor:'#e94560',pointRadius:5,tension:.3,yAxisID:'y1',order:1}
+  ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},scales:{y:{beginAtZero:true,title:{display:true,text:'건수'}},y1:{position:'right',beginAtZero:true,max:100,title:{display:true,text:'전환률(%)'},grid:{drawOnChartArea:false}}}}});
+
+  var csE=Object.entries(S.callStatMap).sort(function(a,b){return b[1]-a[1]});
+  makeChart('cCS',{type:'doughnut',data:{labels:csE.map(function(x){return x[0]}),datasets:[{data:csE.map(function(x){return x[1]}),backgroundColor:['#64ffda','#4361ee','#f59e0b','#e94560','#ec4899','#a855f7','#6b7280','#374151']}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{padding:10,font:{size:11}}}}}});
+  makeChart('cP',{type:'bar',data:{labels:prods.map(function(x){return x[0]||'미분류'}),datasets:[{label:'문의',data:prods.map(function(x){return x[1].count}),backgroundColor:'rgba(67,97,238,0.7)',borderRadius:4},{label:'전환',data:prods.map(function(x){return x[1].conv}),backgroundColor:'rgba(100,255,218,0.7)',borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,indexAxis:'y'}});
+  makeChart('cCo',{type:'bar',data:{labels:cons.map(function(x){return x[0]}),datasets:[{label:'배정',data:cons.map(function(x){return x[1].total}),backgroundColor:'rgba(67,97,238,0.6)',borderRadius:4},{label:'콜',data:cons.map(function(x){return x[1].calls}),backgroundColor:'rgba(168,85,247,0.6)',borderRadius:4},{label:'전환',data:cons.map(function(x){return x[1].conv}),backgroundColor:'rgba(100,255,218,0.7)',borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false}});
+  makeChart('cG',{type:'doughnut',data:{labels:grades.map(function(x){return x[0]}),datasets:[{data:grades.map(function(x){return x[1]}),backgroundColor:['#4361ee','#6366f1','#a855f7','#ec4899','#f59e0b','#64ffda','#6b7280','#374151','#9ca3af','#555']}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{padding:8,font:{size:11}}}}}});
+  makeChart('cF',{type:'doughnut',data:{labels:fields.map(function(x){return x[0]}),datasets:[{data:fields.map(function(x){return x[1]}),backgroundColor:['#4361ee','#e94560','#f59e0b','#64ffda','#a855f7','#ec4899','#6b7280']}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{padding:10,font:{size:11}}}}}});
+  makeChart('cCh',{type:'doughnut',data:{labels:chans.map(function(x){return x[0]}),datasets:[{data:chans.map(function(x){return x[1]}),backgroundColor:['#4361ee','#64ffda','#f59e0b','#a855f7','#ec4899','#6b7280']}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{padding:10,font:{size:11}}}}}});
+  makeChart('cR',{type:'bar',data:{labels:S.months,datasets:[{label:'매출(만원)',data:S.months.map(function(m){return Math.round(S.monthMap[m].rev/10000)}),backgroundColor:'rgba(233,69,96,0.7)',borderRadius:4,order:2},{label:'건당평균(만원)',data:S.months.map(function(m){var d=S.monthMap[m];return d.conv?+(d.rev/d.conv/10000).toFixed(1):0}),type:'line',borderColor:'#64ffda',backgroundColor:'rgba(100,255,218,0.1)',pointBackgroundColor:'#64ffda',pointRadius:5,tension:.3,yAxisID:'y1',order:1}]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},scales:{y:{beginAtZero:true,title:{display:true,text:'매출(만원)'}},y1:{position:'right',beginAtZero:true,title:{display:true,text:'건당평균(만원)'},grid:{drawOnChartArea:false}}}}});
+  var rP=prods.filter(function(x){return x[1].rev>0});
+  makeChart('cRP',{type:'doughnut',data:{labels:rP.map(function(x){return x[0]+' ('+pct(x[1].rev,S.revenue)+'%)'}),datasets:[{data:rP.map(function(x){return x[1].rev}),backgroundColor:['#e94560','#4361ee','#a855f7','#64ffda','#6b7280']}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{padding:10,font:{size:11}}}}}});
+
+  // Insights
+  var g=[],b=[];
+  if(+ccr>50) g.push('콜 연결 시 <strong style="color:#64ffda">'+ccr+'%</strong>의 높은 전환률');
+  g.push('건당 평균 매출 <strong style="color:#64ffda">'+fmtM(avgRev)+'만원</strong>');
+  var bM='',bR=0;S.months.forEach(function(m){if(S.monthMap[m].rev>bR){bR=S.monthMap[m].rev;bM=m}});
+  if(bM)g.push(bM+' 최고 매출 <strong style="color:#64ffda">'+fmtM(bR)+'만원</strong>');
+  if(grades.length>=2){var t2=grades.slice(0,2);g.push(t2[0][0]+'+'+t2[1][0]+' 핵심 타겟 <strong style="color:#64ffda">'+pct(t2[0][1]+t2[1][1],S.total)+'%</strong>')}
+  if(S.noAnswerTotal>0)b.push('부재중 <strong style="color:#e94560">'+S.noAnswerTotal+'건 ('+pct(S.noAnswerTotal,S.total)+'%)</strong> - 재콜 강화 필요');
+  var wM='',wR=1;S.months.forEach(function(m){var d=S.monthMap[m];if(d.total>5){var r=d.conv/d.total;if(r<wR){wR=r;wM=m}}});
+  if(wM&&wR<0.4)b.push(wM+' 전환률 <strong style="color:#e94560">'+(wR*100).toFixed(1)+'%</strong> - 대응 전략 필요');
+  if(chans.length>0&&chans[0][1]/S.total>0.7)b.push(chans[0][0]+' 유입 '+pct(chans[0][1],S.total)+'% 의존 - 채널 다각화 필요');
+  document.getElementById('iG').innerHTML=g.map(function(x){return'<li>'+x+'</li>'}).join('');
+  document.getElementById('iB').innerHTML=b.map(function(x){return'<li>'+x+'</li>'}).join('');
+}
+
+// =============================================
+//  MAIN
+// =============================================
+async function loadAllData(){
+  var ld=document.getElementById('loading');
+  ld.classList.remove('hidden');
+  document.getElementById('loadingText').textContent='Google Sheets에서 데이터를 불러오는 중...';
+  try{
+    var results=await Promise.all(SHEETS.map(function(s){return fetchCSV(s.gid).then(parseCSV)}));
+    var allRec=[];
+    results.forEach(function(rows,i){
+      var cols=detectColumns(rows);
+      var recs=processRows(rows,cols);
+      recs.forEach(function(r){r.source=SHEETS[i].id});
+      allRec=allRec.concat(recs);
+    });
+    var y26Aug=allRec.some(function(r){return r.source==='y26'&&r.month==='8월'});
+    if(y26Aug) allRec=allRec.filter(function(r){return r.source!=='aug'});
+    var stats=analyze(allRec);
+    render(stats);
+    document.getElementById('lastUpdate').textContent='마지막 업데이트: '+new Date().toLocaleString('ko-KR')+'  |  총 '+allRec.length+'건';
+  }catch(err){
+    document.getElementById('dashboard').innerHTML=
+      '<div class="error-box"><h2>데이터 로드 실패</h2>'+
+      '<p style="color:#e94560;font-size:15px">'+err.message+'</p>'+
+      '<p style="margin-top:16px"><strong style="color:#fff">해결 방법:</strong> 바탕화면의 <code>대시보드_실행.bat</code> 파일을 더블클릭해서 실행하세요.</p>'+
+      '<p style="margin-top:8px">로컬 웹서버를 통해 실행해야 Google Sheets 데이터를 정상적으로 불러올 수 있습니다.</p>'+
+      '<button class="refresh-btn" onclick="loadAllData()" style="margin-top:16px">다시 시도</button></div>';
+  }finally{ld.classList.add('hidden')}
+}
+setInterval(loadAllData,5*60*1000);
+loadAllData();
+</script>
+</body>
+</html>
